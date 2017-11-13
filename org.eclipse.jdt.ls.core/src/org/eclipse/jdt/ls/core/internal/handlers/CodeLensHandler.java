@@ -83,7 +83,7 @@ public class CodeLensHandler {
 			IJavaElement[] elements = typeRoot.getChildren();
 			ArrayList<CodeLens> lenses = new ArrayList<>(elements.length);
 			for (CodeLensProvider provider : codeLensProviders) {
-				lenses.addAll(provider.collectCodeLenses(unit, monitor));
+				lenses.addAll(provider.collectCodeLenses(typeRoot, monitor));
 				if (monitor.isCanceled()) {
 					return Collections.emptyList();
 				}
