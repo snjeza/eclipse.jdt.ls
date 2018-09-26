@@ -21,6 +21,7 @@ import java.net.URI;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IncrementalProjectBuilder;
+import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.jobs.IJobChangeEvent;
 import org.eclipse.core.runtime.jobs.IJobChangeListener;
 import org.eclipse.core.runtime.jobs.Job;
@@ -80,6 +81,13 @@ public class MavenBuildSupportTest extends AbstractMavenBasedTest {
 	@Test
 	public void testCompileWithEclipseTychoJdt() throws Exception {
 		testNonStandardCompilerId("compile-with-tycho-jdt");
+	}
+
+	@Test
+	public void testMultipleProjects() throws Exception {
+		IProject project = importMavenProject("multimodule");
+		IProject[] projects = new MavenBuildSupport().collectProjects(project, new NullProgressMonitor());
+		assertEquals(projects.length, 3);
 	}
 
 	@Test
