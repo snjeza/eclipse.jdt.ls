@@ -13,6 +13,7 @@ package org.eclipse.jdt.ls.core.internal.managers;
 import java.io.File;
 import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
@@ -42,13 +43,18 @@ import org.eclipse.m2e.core.embedder.MavenModelManager;
 import org.eclipse.m2e.core.internal.MavenPluginActivator;
 import org.eclipse.m2e.core.internal.preferences.MavenConfigurationImpl;
 import org.eclipse.m2e.core.internal.preferences.ProblemSeverity;
+import org.eclipse.m2e.core.project.IMavenProjectImportResult;
 import org.eclipse.m2e.core.project.IProjectConfigurationManager;
 import org.eclipse.m2e.core.project.LocalProjectScanner;
 import org.eclipse.m2e.core.project.MavenProjectInfo;
 import org.eclipse.m2e.core.project.ProjectImportConfiguration;
+import org.eclipse.m2e.jdt.IClasspathManager;
+import org.eclipse.m2e.jdt.MavenJdtPlugin;
 
 @SuppressWarnings("restriction")
 public class MavenProjectImporter extends AbstractProjectImporter {
+
+	private static final int MAX_PROJECTS_TO_IMPORT = 10;
 
 	public static final String IMPORTING_MAVEN_PROJECTS = "Importing Maven project(s)";
 
@@ -119,7 +125,7 @@ public class MavenProjectImporter extends AbstractProjectImporter {
 	public void importToWorkspace(IProgressMonitor monitor) throws CoreException, OperationCanceledException {
 		JavaLanguageServerPlugin.logInfo(IMPORTING_MAVEN_PROJECTS);
 		MavenConfigurationImpl configurationImpl = (MavenConfigurationImpl)MavenPlugin.getMavenConfiguration();
-		configurationImpl.setDownloadSources(true);
+		configurationImpl.setDownloadSources(false);
 		configurationImpl.setNotCoveredMojoExecutionSeverity(ProblemSeverity.ignore.toString());
 		SubMonitor subMonitor = SubMonitor.convert(monitor, 105);
 		subMonitor.setTaskName(IMPORTING_MAVEN_PROJECTS);
@@ -149,8 +155,45 @@ public class MavenProjectImporter extends AbstractProjectImporter {
 			}
 		}
 		if (!toImport.isEmpty()) {
-			ProjectImportConfiguration importConfig = new ProjectImportConfiguration();
-			configurationManager.importProjects(toImport, importConfig, subMonitor.split(75));
+			boolean downloadSources = JavaLanguageServerPlugin.getPreferencesManager().getPreferences().isMavenDownloadSources();
+			if (toImport.size() > MAX_PROJECTS_TO_IMPORT) {
+				JavaLanguageServerPlugin.logInfo("Projects size:" + toImport.size());
+				Iterator<MavenProjectInfo> iter = toImport.iterator();
+				int it = 0;
+				List<IMavenProjectImportResult> results = new ArrayList<>();
+				SubMonitor monitor2 = SubMonitor.convert(monitor, projects.size() * 2);
+				while (iter.hasNext()) {
+					List<MavenProjectInfo> importPartial = new ArrayList<>();
+					int i = 0;
+					while (i++ < MAX_PROJECTS_TO_IMPORT && iter.hasNext()) {
+						importPartial.add(iter.next());
+					}
+					ProjectImportConfiguration importConfig = new ProjectImportConfiguration();
+					List<IMavenProjectImportResult> result = configurationManager.importProjects(importPartial, importConfig, monitor2.split(MAX_PROJECTS_TO_IMPORT));
+					results.addAll(result);
+					if (downloadSources) {
+						for (IMavenProjectImportResult r : results) {
+							downloadSources(r.getProject(), true, false);
+						}
+					}
+					monitor2.worked(MAX_PROJECTS_TO_IMPORT);
+				}
+				List<IProject> imported = new ArrayList<>(results.size());
+				for (IMavenProjectImportResult result : results) {
+					imported.add(result.getProject());
+				}
+				JavaLanguageServerPlugin.logInfo("Update projects:" + it++);
+				updateProjects(imported, lastWorkspaceStateSaved, monitor2);
+				monitor2.done();
+			} else {
+				ProjectImportConfiguration importConfig = new ProjectImportConfiguration();
+				List<IMavenProjectImportResult> results = configurationManager.importProjects(toImport, importConfig, subMonitor.split(75));
+				if (downloadSources) {
+					for (IMavenProjectImportResult result : results) {
+						downloadSources(result.getProject(), true, false);
+					}
+				}
+			}
 		}
 		subMonitor.setWorkRemaining(20);
 		updateProjects(projects, lastWorkspaceStateSaved, subMonitor.split(20));
@@ -247,6 +290,11 @@ public class MavenProjectImporter extends AbstractProjectImporter {
 				return this;
 			}
 		}.collectProjects(projects);
+	}
+
+	private void downloadSources(IProject project, boolean downloadSources, boolean downloadJavadoc) {
+		IClasspathManager buildpathManager = MavenJdtPlugin.getDefault().getBuildpathManager();
+		buildpathManager.scheduleDownload(project, downloadSources, downloadJavadoc);
 	}
 
 }
