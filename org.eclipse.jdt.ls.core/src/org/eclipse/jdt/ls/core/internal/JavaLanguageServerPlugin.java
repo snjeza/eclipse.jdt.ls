@@ -62,12 +62,12 @@ import org.eclipse.jdt.ls.core.internal.contentassist.TypeFilter;
 import org.eclipse.jdt.ls.core.internal.corext.template.java.JavaContextType;
 import org.eclipse.jdt.ls.core.internal.corext.template.java.JavaLanguageServerTemplateStore;
 import org.eclipse.jdt.ls.core.internal.handlers.JDTLanguageServer;
-import org.eclipse.jdt.ls.core.internal.managers.StandardProjectsManager;
 import org.eclipse.jdt.ls.core.internal.managers.ContentProviderManager;
 import org.eclipse.jdt.ls.core.internal.managers.DigestStore;
 import org.eclipse.jdt.ls.core.internal.managers.ProjectsManager;
-import org.eclipse.jdt.ls.core.internal.preferences.StandardPreferenceManager;
+import org.eclipse.jdt.ls.core.internal.managers.StandardProjectsManager;
 import org.eclipse.jdt.ls.core.internal.preferences.PreferenceManager;
+import org.eclipse.jdt.ls.core.internal.preferences.StandardPreferenceManager;
 import org.eclipse.jdt.ls.core.internal.syntaxserver.SyntaxLanguageServer;
 import org.eclipse.jdt.ls.core.internal.syntaxserver.SyntaxProjectsManager;
 import org.eclipse.jface.text.templates.TemplateVariableResolver;
@@ -173,6 +173,9 @@ public class JavaLanguageServerPlugin extends Plugin {
 			preferenceManager = new StandardPreferenceManager();
 			projectsManager = new StandardProjectsManager(preferenceManager);
 		}
+		IEclipsePreferences fDefaultPreferenceStore = DefaultScope.INSTANCE.getNode(JavaManipulation.getPreferenceNodeId());
+		String javaCompletionFavoriteMembers = String.join(":", preferenceManager.getPreferences().getJavaCompletionFavoriteMembers());
+		fDefaultPreferenceStore.put(JavaManipulationPlugin.CODEASSIST_FAVORITE_STATIC_MEMBERS, javaCompletionFavoriteMembers);
 
 		digestStore = new DigestStore(getStateLocation().toFile());
 		try {
