@@ -181,25 +181,27 @@ public class FormatterManager {
 			}
 		}
 		if (options != null && !options.isEmpty()) {
-			setFormattingOptions(options);
+			setFormattingOptions(preferenceManager, options);
 		} else {
 			Map<String, String> defaultOptions = DefaultCodeFormatterOptions.getEclipseDefaultSettings().getMap();
 			Hashtable<String, String> javaOptions = JavaCore.getOptions();
 			defaultOptions.forEach((k, v) -> {
 				javaOptions.put(k, v);
 			});
-			JavaCore.setOptions(javaOptions);
 			JavaLanguageServerPlugin.getPreferencesManager().initializeJavaCoreOptions();
+			preferenceManager.updateTabSizeInsertSpaces(javaOptions);
+			JavaCore.setOptions(javaOptions);
 		}
 	}
 
-	private static void setFormattingOptions(Map<String, String> options) {
+	private static void setFormattingOptions(PreferenceManager preferenceManager, Map<String, String> options) {
 		Map<String, String> defaultOptions = DefaultCodeFormatterOptions.getEclipseDefaultSettings().getMap();
 		defaultOptions.putAll(options);
 		Hashtable<String, String> javaOptions = JavaCore.getOptions();
 		defaultOptions.entrySet().stream().filter(p -> p.getKey().startsWith(FORMATTER_OPTION_PREFIX)).forEach(p -> {
 			javaOptions.put(p.getKey(), p.getValue());
 		});
+		preferenceManager.updateTabSizeInsertSpaces(javaOptions);
 		JavaCore.setOptions(javaOptions);
 	}
 

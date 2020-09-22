@@ -19,9 +19,8 @@ import java.util.Hashtable;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
-
-import com.google.common.base.Objects;
 
 import org.apache.commons.lang3.StringUtils;
 import org.eclipse.core.resources.IResource;
@@ -130,6 +129,8 @@ public class PreferenceManager {
 		javaCoreOptions.put(JavaCore.COMPILER_PB_UNHANDLED_WARNING_TOKEN, JavaCore.IGNORE);
 		javaCoreOptions.put(JavaCore.COMPILER_PB_REDUNDANT_SUPERINTERFACE, JavaCore.WARNING);
 		javaCoreOptions.put(JavaCore.CODEASSIST_SUBWORD_MATCH, JavaCore.DISABLED);
+		javaCoreOptions.put(DefaultCodeFormatterConstants.FORMATTER_TAB_CHAR, JavaCore.TAB);
+		javaCoreOptions.put(DefaultCodeFormatterConstants.FORMATTER_TAB_SIZE, "4");
 		JavaCore.setOptions(javaCoreOptions);
 	}
 
@@ -158,7 +159,7 @@ public class PreferenceManager {
 	private static boolean updateTemplate(String templateId, String content) {
 		Template template = templates.get(templateId);
 		if ((StringUtils.isEmpty(content) && template == null)
-			|| (template != null && Objects.equal(content, template.getPattern()))) {
+				|| (template != null && Objects.equals(content, template.getPattern()))) {
 			return false;
 		}
 
@@ -178,7 +179,6 @@ public class PreferenceManager {
 		Preferences oldPreferences = this.preferences;
 		this.preferences = preferences;
 		preferencesChanged(oldPreferences, preferences); // listener will get latest preference from getPreferences()
-
 		// Update the templates according to the new preferences.
 		boolean templateChanged = false;
 		List<String> fileHeader = preferences.getFileHeaderTemplate();
@@ -191,8 +191,19 @@ public class PreferenceManager {
 		if (templateChanged) {
 			reloadTemplateStore();
 		}
-
+		Hashtable<String, String> options = JavaCore.getOptions();
+		updateTabSizeInsertSpaces(options);
+		JavaCore.setOptions(options);
 		// TODO serialize preferences
+	}
+
+	public void updateTabSizeInsertSpaces(Hashtable<String, String> options) {
+		int tabSize = preferences.getTabSize();
+		if (tabSize > 0) {
+			options.put(DefaultCodeFormatterConstants.FORMATTER_TAB_SIZE, String.valueOf(tabSize));
+		}
+		boolean insertSpaces = preferences.isInsertSpaces();
+		options.put(DefaultCodeFormatterConstants.FORMATTER_TAB_CHAR, insertSpaces ? JavaCore.SPACE : JavaCore.TAB);
 	}
 
 	private void preferencesChanged(Preferences oldPreferences, Preferences newPreferences) {

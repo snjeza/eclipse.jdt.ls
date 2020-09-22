@@ -58,6 +58,14 @@ public class Preferences {
 	 */
 	public static final String JAVA_HOME = "java.home";
 	/**
+	 * Insert spaces when pressing Tab
+	 */
+	public static final String JAVA_CONFIGURATION_INSERTSPACES = "java.format.insertSpaces";
+	/**
+	 * Tab Size
+	 */
+	public static final String JAVA_CONFIGURATION_TABSIZE = "java.format.tabSize";
+	/**
 	 * Specifies Java Execution Environments.
 	 */
 	public static final String JAVA_CONFIGURATION_RUNTIMES = "java.configuration.runtimes";
@@ -458,6 +466,8 @@ public class Preferences {
 
 	private List<String> fileHeaderTemplate = new LinkedList<>();
 	private List<String> typeCommentTemplate = new LinkedList<>();
+	private boolean insertSpaces;
+	private int tabSize;
 
 	static {
 		JAVA_IMPORT_EXCLUSIONS_DEFAULT = new LinkedList<>();
@@ -630,6 +640,8 @@ public class Preferences {
 		staticImportOnDemandThreshold = IMPORTS_STATIC_ONDEMANDTHRESHOLD_DEFAULT;
 		referencedLibraries = JAVA_PROJECT_REFERENCED_LIBRARIES_DEFAULT;
 		resourceFilters = JAVA_RESOURCE_FILTERS_DEFAULT;
+		insertSpaces = true;
+		tabSize = 4;
 	}
 
 	/**
@@ -652,6 +664,10 @@ public class Preferences {
 
 		boolean importGradleEnabled = getBoolean(configuration, IMPORT_GRADLE_ENABLED, true);
 		prefs.setImportGradleEnabled(importGradleEnabled);
+		boolean insertSpaces = getBoolean(configuration, JAVA_CONFIGURATION_INSERTSPACES, true);
+		prefs.setInsertSpaces(insertSpaces);
+		int tabSize = getInt(configuration, JAVA_CONFIGURATION_TABSIZE, 4);
+		prefs.setTabSize(tabSize);
 		boolean importGradleOfflineEnabled = getBoolean(configuration, IMPORT_GRADLE_OFFLINE_ENABLED, false);
 		prefs.setImportGradleOfflineEnabled(importGradleOfflineEnabled);
 		boolean gradleWrapperEnabled = getBoolean(configuration, GRADLE_WRAPPER_ENABLED, true);
@@ -1461,4 +1477,23 @@ public class Preferences {
 		this.typeCommentTemplate = typeCommentTemplate;
 		return this;
 	}
+
+	public Preferences setInsertSpaces(boolean insertSpaces) {
+		this.insertSpaces = insertSpaces;
+		return this;
+	}
+
+	public Preferences setTabSize(int tabSize) {
+		this.tabSize = tabSize;
+		return this;
+	}
+
+	public boolean isInsertSpaces() {
+		return insertSpaces;
+	}
+
+	public int getTabSize() {
+		return tabSize;
+	}
+
 }
