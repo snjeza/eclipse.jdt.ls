@@ -192,18 +192,9 @@ public class PreferenceManager {
 			reloadTemplateStore();
 		}
 		Hashtable<String, String> options = JavaCore.getOptions();
-		updateTabSizeInsertSpaces(options);
+		preferences.updateTabSizeInsertSpaces(options);
 		JavaCore.setOptions(options);
 		// TODO serialize preferences
-	}
-
-	public void updateTabSizeInsertSpaces(Hashtable<String, String> options) {
-		int tabSize = preferences.getTabSize();
-		if (tabSize > 0) {
-			options.put(DefaultCodeFormatterConstants.FORMATTER_TAB_SIZE, String.valueOf(tabSize));
-		}
-		boolean insertSpaces = preferences.isInsertSpaces();
-		options.put(DefaultCodeFormatterConstants.FORMATTER_TAB_CHAR, insertSpaces ? JavaCore.SPACE : JavaCore.TAB);
 	}
 
 	private void preferencesChanged(Preferences oldPreferences, Preferences newPreferences) {
