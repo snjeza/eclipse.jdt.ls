@@ -178,4 +178,11 @@ public interface IBuildSupport {
 		return Collections.emptyList();
 	}
 
+	/**
+	 * @param project
+	 * @param resource
+	 */
+	default void compile(IProject project, IResource resource) {
+	}
+
 }

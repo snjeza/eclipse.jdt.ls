@@ -723,6 +723,18 @@ public class GradleProjectImporter extends AbstractProjectImporter {
 			addInitScriptToArgs(aspectjInitScript, args);
 		}
 
+		// Add init script of kotlin support
+		if (preferencesManager.getPreferences().isKotlinSupportEnabled()) {
+			File kotlinInitScript = GradleUtils.getGradleInitScript("/gradle/kotlin/init.gradle");
+			addInitScriptToArgs(kotlinInitScript, args);
+		}
+
+		// Add init script of groovy support
+		if (preferencesManager.getPreferences().isGroovySupportEnabled()) {
+			File groovyInitScript = GradleUtils.getGradleInitScript("/gradle/groovy/init.gradle");
+			addInitScriptToArgs(groovyInitScript, args);
+		}
+
 		return args;
 	}
 

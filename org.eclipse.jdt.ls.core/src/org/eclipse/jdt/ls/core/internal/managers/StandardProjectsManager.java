@@ -302,6 +302,8 @@ public class StandardProjectsManager extends ProjectsManager {
 							appendBuildFileMarker(resource);
 							break;
 					}
+				} else {
+					buildSupport.compile(project, resource);
 				}
 			}
 		} catch (CoreException e) {

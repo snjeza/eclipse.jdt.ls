@@ -12,16 +12,22 @@
  *******************************************************************************/
 package org.eclipse.jdt.ls.core.internal.managers;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.eclipse.buildship.core.BuildConfiguration;
 import org.eclipse.buildship.core.GradleBuild;
@@ -37,9 +43,13 @@ import org.eclipse.buildship.core.internal.workspace.WorkbenchShutdownEvent;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.resources.WorkspaceJob;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 import org.eclipse.core.runtime.IProgressMonitor;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Status;
+import org.eclipse.core.runtime.SubMonitor;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.jdt.apt.core.util.AptConfig;
 import org.eclipse.jdt.apt.core.util.IFactoryPath;
@@ -47,14 +57,25 @@ import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
 import org.eclipse.jdt.launching.IVMInstall;
+import org.eclipse.jdt.ls.core.internal.IConstants;
+import org.eclipse.jdt.ls.core.internal.JDTUtils;
+import org.eclipse.jdt.ls.core.internal.JavaClientConnection;
 import org.eclipse.jdt.ls.core.internal.JavaLanguageServerPlugin;
 import org.eclipse.jdt.ls.core.internal.ProjectUtils;
 import org.eclipse.jdt.ls.core.internal.ResourceUtils;
+import org.eclipse.jdt.ls.core.internal.ServiceStatus;
 import org.eclipse.jdt.ls.core.internal.managers.ProjectsManager.CHANGE_TYPE;
 import org.eclipse.jdt.ls.core.internal.preferences.IPreferencesChangeListener;
 import org.eclipse.jdt.ls.core.internal.preferences.PreferenceManager;
+import org.eclipse.lsp4j.Diagnostic;
+import org.eclipse.lsp4j.DiagnosticSeverity;
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.PublishDiagnosticsParams;
+import org.eclipse.lsp4j.Range;
 import org.gradle.tooling.CancellationTokenSource;
 import org.gradle.tooling.GradleConnector;
+import org.gradle.tooling.ProjectConnection;
+import org.gradle.tooling.model.GradleProject;
 import org.gradle.tooling.model.eclipse.EclipseProject;
 
 /**
@@ -63,6 +84,23 @@ import org.gradle.tooling.model.eclipse.EclipseProject;
  */
 public class GradleBuildSupport implements IBuildSupport {
 
+	private static final String GRADLE = "Gradle";
+	private static final String GROOVY = "Groovy";
+	private static final String GROOVY_EXTENSION = ".groovy";
+	private static final String COMPILE_TEST_GROOVY = "compileTestGroovy";
+	private static final String COMPILE_GROOVY = "compileGroovy";
+	private static Pattern GROOVY_PATTERN = Pattern.compile("(?m)^(?<file>.*\\.groovy):\\s*(?<line>\\d+):\\s*(?<message>.*)\\R\\s*@\\s*line\\s+\\d+,\\s*column\\s+(?<col>\\d+)\\.");
+	private static final String KOTLIN = "Kotlin";
+	private static final String KOTLIN_EXTENSION = ".kt";
+	private static final String COMPILE_TEST_KOTLIN = "compileTestKotlin";
+	private static final String COMPILE_KOTLIN = "compileKotlin";
+	private static Pattern KOTLIN_PATTERN = Pattern.compile("(?m)^(?:(?<type>[ew]): )?(?:file:///)?(?<file>.*\\.(?:kt|kts|aj)):(?<line>\\d+):(?<col>\\d+)?\\s*(?<message>.*)$");
+	private static final String ASPECTJ = "AspectJ";
+	private static final String ASPECTJ_EXTENSION = ".aj";
+	private static final String COMPILE_TEST_ASPECTJ = "compileTestAspectj";
+	private static final String COMPILE_ASPECTJ = "compileAspectj";
+	private static Pattern ASPECTJ_PATTERN = Pattern.compile("(?m)^(?<file>.*\\.aj):(?<line>\\d+)\\s+\\[(?<type>error|warning)\\]\\s+(?<message>.*)\\R(?<source>.*)\\R(?<indent>\\s*)\\^");
+	private static final String UNKNOWN = "Unknown";
 	public static final Pattern GRADLE_FILE_EXT = Pattern.compile("^.*\\.gradle(\\.kts)?$");
 	public static final String GRADLE_PROPERTIES = "gradle.properties";
 	public static final List<String> WATCH_FILE_PATTERNS = Arrays.asList("**/*.gradle", "**/*.gradle.kts", "**/gradle.properties");
@@ -322,7 +360,7 @@ public class GradleBuildSupport implements IBuildSupport {
 
 	@Override
 	public String buildToolName() {
-		return "Gradle";
+		return GRADLE;
 	}
 
 	@Override
@@ -422,6 +460,251 @@ public class GradleBuildSupport implements IBuildSupport {
 	private static void disableApt(IJavaProject javaProject) {
 		if (AptConfig.isEnabled(javaProject)) {
 			AptConfig.setEnabled(javaProject, false);
+		}
+	}
+
+	/* (non-Javadoc)
+	 * @see org.eclipse.jdt.ls.core.internal.managers.IBuildSupport#compile(org.eclipse.core.resources.IProject)
+	 */
+	@Override
+	public void compile(IProject project, IResource resource) {
+		if (project == null || resource == null || !applies(project)) {
+			return;
+		}
+		PreferenceManager preferenceManager = JavaLanguageServerPlugin.getPreferencesManager();
+		if (preferenceManager == null || !preferenceManager.getPreferences().isAutobuildEnabled() || !ProjectUtils.isGradleProject(project)) {
+			return;
+		}
+		boolean shouldCompile = (preferenceManager.getPreferences().isAspectjSupportEnabled() && resource.getName().endsWith(ASPECTJ_EXTENSION))
+				|| (preferenceManager.getPreferences().isKotlinSupportEnabled() && resource.getName().endsWith(KOTLIN_EXTENSION))
+				|| (preferenceManager.getPreferences().isGroovySupportEnabled() && resource.getName().endsWith(GROOVY_EXTENSION));
+		if (shouldCompile) {
+			String uriString = JDTUtils.getFileURI(resource);
+			PublishDiagnosticsParams $ = new PublishDiagnosticsParams(ResourceUtils.toClientUri(uriString), Collections.emptyList());
+			JavaClientConnection conn = JavaLanguageServerPlugin.getInstance().getProtocol().getClientConnection();
+			conn.publishDiagnostics($);
+			String message = "Starting Gradle compiling for ";
+			JavaLanguageServerPlugin.sendStatus(ServiceStatus.Message, message + project.getName() + " configuration");
+			WorkspaceJob job = new WorkspaceJob("Starting Gradle Compiling for " + project.getName()) {
+
+				@Override
+				public boolean belongsTo(Object family) {
+					return IConstants.UPDATE_PROJECT_FAMILY.equals(family) || (IConstants.JOBS_FAMILY + "." + project.getName()).equals(family) || IConstants.JOBS_FAMILY.equals(family);
+				}
+
+				@Override
+				public IStatus runInWorkspace(IProgressMonitor monitor) {
+					if (JavaLanguageServerPlugin.getProjectsManager() == null) {
+						return Status.CANCEL_STATUS;
+					}
+					IStatus status = Status.OK_STATUS;
+					String projectName = project.getName();
+					SubMonitor progress = SubMonitor.convert(monitor, 100).checkCanceled();
+					long start = System.currentTimeMillis();
+					File projectDir = project.getLocation().toFile();
+					String projectLocation;
+					try {
+						projectLocation = projectDir.getCanonicalPath();
+					} catch (IOException e) {
+						JavaLanguageServerPlugin.logException(e);
+						return Status.CANCEL_STATUS;
+					}
+					try (ProjectConnection connection = GradleConnector.newConnector().forProjectDirectory(projectDir).connect()) {
+						GradleProject rootProject = connection.model(GradleProject.class).get();
+						GradleProject gradleProject = getProject(rootProject, projectLocation);
+						if (gradleProject == null) {
+							gradleProject = rootProject;
+						}
+						if (gradleProject != null) {
+							// @formatter:off
+							List<String> includeTasks = Arrays.asList(COMPILE_KOTLIN, COMPILE_TEST_KOTLIN,
+									COMPILE_GROOVY, COMPILE_TEST_GROOVY,
+									COMPILE_ASPECTJ, COMPILE_TEST_ASPECTJ);
+							List<String> taskNames = gradleProject.getTasks().stream()
+								.map(t -> t.getName())
+								.filter(name -> includeTasks.contains(name))
+								.collect(Collectors.toList());
+							if (!taskNames.isEmpty()) {
+								progress.beginTask("Run gradle tasks: " + taskNames + " for project '" + gradleProject.getPath() + "'", 100);
+								ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+								ByteArrayOutputStream errorStream = new ByteArrayOutputStream();
+								try {
+									connection
+										.newBuild()
+										.setStandardError(errorStream)
+										.setStandardOutput(outputStream)
+										.forTasks(taskNames.toArray(new String[0]))
+										.withArguments("-q", "-offline",
+											"-Dorg.gradle.configureondemand=true",
+											"-Dorg.gradle.caching=true",
+											"--continue", "--console=plain"
+										)
+										.run();
+								} catch (Exception e) {
+									if (Boolean.getBoolean("jdt.ls.debug")) {
+										JavaLanguageServerPlugin.logException(e);
+									}
+								} finally {
+									String log = outputStream.toString();
+									if (!log.isBlank()) {
+										JavaLanguageServerPlugin.debugTrace("Gradle log: " + log);
+									}
+									String error = errorStream.toString();
+									if (!error.isBlank()) {
+										boolean parseKotlin = taskNames.contains(COMPILE_KOTLIN) || taskNames.contains(COMPILE_TEST_KOTLIN);
+										boolean parseGroovy = taskNames.contains(COMPILE_GROOVY) || taskNames.contains(COMPILE_TEST_GROOVY);
+										boolean parseAspectj = taskNames.contains(COMPILE_ASPECTJ) || taskNames.contains(COMPILE_TEST_ASPECTJ);
+										publishDiagnostics(error, parseKotlin, parseGroovy, parseAspectj);
+									}
+									progress.done();
+								}
+							}
+							// @formatter:on
+							long elapsed = System.currentTimeMillis() - start;
+							JavaLanguageServerPlugin.debugTrace("Compiling gradle project " + projectName + " took " + elapsed + " ms");
+						}
+					} catch (Exception e) {
+						if (Boolean.getBoolean("jdt.ls.debug")) {
+							JavaLanguageServerPlugin.logException(e);
+						}
+					}
+					return status;
+				}
+
+				private void publishDiagnostics(String error, boolean parseKotlin, boolean parseGroovy, boolean parseAspectj) {
+					JavaLanguageServerPlugin.logError("Gradle Error log: " + error);
+					Map<String, List<Diagnostic>> diagnosticMap = new HashMap<>();
+					if (parseKotlin) {
+						getDiagnostics(KOTLIN_PATTERN, error, diagnosticMap);
+					}
+					if (parseGroovy) {
+						getDiagnostics(GROOVY_PATTERN, error, diagnosticMap);
+					}
+					if (parseAspectj) {
+						getDiagnostics(ASPECTJ_PATTERN, error, diagnosticMap);
+					}
+					diagnosticMap.forEach((uri, diagnostics) -> {
+						PublishDiagnosticsParams $ = new PublishDiagnosticsParams(ResourceUtils.toClientUri(uri), diagnostics );
+						JavaClientConnection conn = JavaLanguageServerPlugin.getInstance().getProtocol().getClientConnection();
+						conn.publishDiagnostics($);
+					});
+				}
+
+				private void getDiagnostics(Pattern pattern, String error, Map<String, List<Diagnostic>> diagnosticMap) {
+					Matcher matcher = pattern.matcher(error);
+					while (matcher.find()) {
+						String uri = getGroup(matcher, "file", null);
+						if (uri == null) {
+							continue;
+						}
+						Diagnostic diag = new Diagnostic();
+						String message = getGroup(matcher, "message", UNKNOWN);
+						diag.setMessage(message);
+						String ID = Integer.toString(-1);
+						diag.setCode(ID);
+						DiagnosticSeverity severity;
+						String type = getGroup(matcher, "message", "e");
+						if ("w".equalsIgnoreCase(type) || "warning".equalsIgnoreCase(type)) {
+							severity = DiagnosticSeverity.Warning;
+						} else {
+							severity = DiagnosticSeverity.Error;
+						}
+						diag.setSeverity(severity);
+						int line;
+						try {
+							line = Integer.valueOf(matcher.group("line"));
+							line--;
+						} catch (Exception e) {
+							line = 0;
+						}
+						int startChar = 0;
+						int endChar = -1;
+						// AspectJ
+						if (uri.endsWith(ASPECTJ_EXTENSION)) {
+							// whole line
+							startChar = 0;
+							endChar = 500;
+						} else {
+							try {
+								startChar = Integer.valueOf(matcher.group("col"));
+								startChar--;
+							} catch (Exception e) {
+								// ignore
+							}
+						}
+						if (startChar < 0) {
+							startChar = 0;
+						}
+						if (line < 0) {
+							line = 0;
+						}
+						if (endChar < 0) {
+							endChar = startChar;
+						}
+						Position startPosition = new Position(line, startChar);
+						Position endPosition = new Position(line, endChar);
+						Range range = new Range(startPosition, endPosition);
+						diag.setRange(range);
+						diag.setSource(GRADLE);
+						if (uri != null) {
+							if (uri.endsWith(KOTLIN_EXTENSION)) {
+								diag.setSource(KOTLIN);
+							} else if (uri.endsWith(GROOVY_EXTENSION)) {
+								diag.setSource(GROOVY);
+							} else if (uri.endsWith(ASPECTJ_EXTENSION)) {
+								diag.setSource(ASPECTJ);
+							}
+						}
+						List<Diagnostic> diagnostics = diagnosticMap.get(uri);
+						if (diagnostics == null) {
+							diagnostics = new ArrayList<>();
+							diagnosticMap.put(uri, diagnostics);
+						}
+						diagnostics.add(diag);
+						if (Boolean.getBoolean("jdt.ls.debug")) {
+							StringBuilder builder = new StringBuilder();
+							builder.append("--- Diagnostic ---");
+							builder.append("\nResource: " + matcher.group("file"));
+							builder.append("\nType: " + type);
+							builder.append("\nPosition: Line: " + line + " Character:" + startChar);
+							builder.append("\nmessage: " + matcher.group("message").trim());
+							JavaLanguageServerPlugin.debugTrace(builder.toString());
+						}
+					}
+				}
+
+				private String getGroup(Matcher matcher, String group, String defaultValue) {
+					try {
+						return Optional.ofNullable(matcher.group(group))
+								.map(String::trim)
+								.orElse(defaultValue);
+					} catch (Exception e) {
+						return defaultValue;
+					}
+				}
+
+				private GradleProject getProject(GradleProject rootProject, String projectLocation) {
+					try {
+						if (rootProject.getProjectDirectory().getCanonicalPath().equals(projectLocation)) {
+							return rootProject;
+						}
+					} catch (IOException e) {
+						JavaLanguageServerPlugin.logException(e);
+					}
+					for (GradleProject child : rootProject.getChildren().getAll()) {
+						GradleProject gradleProject = getProject(child, projectLocation);
+						if (gradleProject != null) {
+							return gradleProject;
+						}
+					}
+					return null;
+				}
+			};
+			ProjectsManager projectsManager = JavaLanguageServerPlugin.getProjectsManager();
+			if (projectsManager != null) {
+				projectsManager.waitForUpdateJobs();
+				job.schedule();
+			}
 		}
 	}
 }

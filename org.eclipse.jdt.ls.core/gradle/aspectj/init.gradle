@@ -61,6 +61,9 @@ gradle.projectsEvaluated { g ->
 								entry.entryAttributes.put("aspectj_generated", "true")
 								entry.entryAttributes.put("optional", "true")
 								entry.entryAttributes.put("ignore_optional_problems", "true")
+								if (taskName == 'compileTestAspectj') {
+									entry.entryAttributes.put("test", "true")
+								}
 								cp.entries.add(entry)
 							}
 						}
